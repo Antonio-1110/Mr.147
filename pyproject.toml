@@ -1,0 +1,57 @@
+[project]
+name = "mr147"
+version = "0.1.0"
+description = "Autonomous snooker robot: ball recognition + shot planning (pooltool)"
+readme = "README.md"
+authors = [
+    { name = "Antonio Tsai", email = "antonio20051110@gmail.com" }
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=2.5.5",
+    "opencv-python>=5.1.0.95",
+    "panda3d==1.11.0.dev3702 ; sys_platform != 'darwin'",
+    "panda3d>=1.10.13,<1.11 ; sys_platform == 'darwin'",
+    "pooltool-billiards>=0.5.0",
+]
+
+[project.scripts]
+mr147 = "mr147:main"
+mr147-gen = "mr147.vision.generate:main"
+mr147-preview = "mr147.vision.preview:main"
+mr147-train = "mr147.vision.train:main"
+mr147-check-video = "mr147.vision.check_video:main"
+mr147-check-data = "mr147.vision.check_data:main"
+mr147-crops = "mr147.vision.reader:crops_main"
+mr147-train-reader = "mr147.vision.reader:train_main"
+
+[project.optional-dependencies]
+# Only needed to train or run the YOLO detector: uv sync --extra train
+train = ["ultralytics>=8.3"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
+
+# pooltool pins a panda3d dev build on Linux/Windows that only exists on Panda3D's
+# own index. macOS uses the regular PyPI release. (Mirrors pooltool's own config.)
+[[tool.uv.index]]
+name = "panda3d-archive"
+url = "https://archive.panda3d.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+panda3d = [
+    { index = "panda3d-archive", marker = "sys_platform != 'darwin'" },
+]
+
+[tool.uv]
+# panda3d dev wheels only exist for these targets (no Linux ARM yet).
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]

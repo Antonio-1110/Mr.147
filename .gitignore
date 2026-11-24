@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual env (managed by uv; uv.lock IS committed)
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Numba JIT cache (pooltool uses numba)
+*.nbi
+*.nbc
+
+# Vision data: raw captures, recordings, and model weights are large
+data/raw/
+data/captures/
+data/synth/
+data/synth-*/
+data/real-*/
+runs/
+models/
+video-check.jpg
+recordings/
+*.mp4
+*.avi
+*.mov
+*.pt
+*.onnx
+*.weights
+
+# Outputs / logs
+outputs/
+logs/
+*.log
+
+# Secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+.sync-tmp/
