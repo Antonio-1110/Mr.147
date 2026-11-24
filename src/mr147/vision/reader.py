@@ -15,11 +15,20 @@ Make the reader's training pictures from a generated set, then train it:
 
 and use it:  YoloDetector("models/pool.pt", reader="models/pool-reader.pt")
 or:          mr147-check-video ... --model models/pool.pt --reader models/pool-reader.pt
+
+Only the ball, not the cloth: everything outside the ball's circle is painted plain
+grey before the reader sees it. A reader that also saw the cloth learnt that a blue
+ring round a black ball means "the blue 10 seen from its black cap", so on blue
+cloth the black 8 kept coming out as a 10. Crops are made with the grey surround
+(`crops.json` in the crops folder says so) and the trained reader carries a
+`pool-reader.json` beside it, so it gets the same kind of crop when it is used.
+Readers trained before this have no such file and still get the cloth.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 from pathlib import Path
 
@@ -28,6 +37,29 @@ import numpy as np
 
 CROP_SIZE = 128  # pixels; the reader looks at 128 x 128 crops
 PAD = 0.3  # crop = the ball's box plus this share of its size on every side
+SURROUND = (128, 128, 128)  # what replaces the cloth around the ball
+EDGE = 1.04  # the kept circle is a touch wider than the box: a slightly small box keeps the ball whole, little cloth shows
+
+
+def blank_surroundings(crop: np.ndarray, pad: float = PAD) -> np.ndarray:
+    """Paint everything outside the ball's circle grey (the circle the box says, in the middle of the crop)."""
+    size = crop.shape[0]
+    r = size / (2 * (1 + 2 * pad)) * EDGE
+    yy, xx = np.mgrid[:size, :size]
+    c = (size - 1) / 2
+    out = crop.copy()
+    out[(xx - c) ** 2 + (yy - c) ** 2 > r * r] = SURROUND
+    return out
+
+
+def _settings_file(weights: str | Path) -> Path:
+    return Path(weights).with_suffix(".json")
+
+
+def reader_blanks_surroundings(weights: str | Path) -> bool:
+    """Was this reader trained on crops with a grey surround? (older readers: no settings file, no)"""
+    f = _settings_file(weights)
+    return f.exists() and bool(json.loads(f.read_text()).get("blank_surroundings"))
 
 
 def crop_ball(image: np.ndarray, box, pad: float = PAD, size: int = CROP_SIZE,
@@ -47,12 +79,13 @@ def crop_ball(image: np.ndarray, box, pad: float = PAD, size: int = CROP_SIZE,
 class BallReader:
     """A trained reader (an ultralytics image classifier). Needs the `ultralytics` package."""
 
-    def __init__(self, weights: str | Path, device: str | None = None):
+    def __init__(self, weights: str | Path, device: str | None = None, blank: bool | None = None):
         from ultralytics import YOLO
 
         self.model = YOLO(str(weights))
         self.names = self.model.names
         self.device = device
+        self.blank = reader_blanks_surroundings(weights) if blank is None else blank
 
     def read(self, image: np.ndarray, boxes: list) -> list[dict[str, float]]:
         """For each box in the RGB image: ball name -> probability."""
@@ -60,6 +93,8 @@ class BallReader:
             return []
         bgr = np.ascontiguousarray(image[..., ::-1])
         crops = [crop_ball(bgr, b) for b in boxes]
+        if self.blank:
+            crops = [blank_surroundings(c) for c in crops]
         results = self.model.predict(crops, imgsz=CROP_SIZE, device=self.device, verbose=False)
         return [{self.names[i]: float(p) for i, p in enumerate(r.probs.data.tolist())} for r in results]
 
@@ -92,21 +127,23 @@ def reread(found: list, image: np.ndarray, reader: BallReader, keep: float = 0.0
 # --------------------------------------------------------------------------- training pictures
 
 
-def make_crops(data: Path, out: Path, size: int = CROP_SIZE, per_ball: int = 1, seed: int = 0) -> dict:
+def make_crops(data: Path, out: Path, size: int = CROP_SIZE, per_ball: int = 1, seed: int = 0,
+               blank: bool = True) -> dict:
     """Cut every labelled ball out of a generated set: out/{train,val}/<look>/*.jpg.
 
     The folder is how the ball looks in that picture's ball set ("purple", "pink-stripe",
     "black", "cue"; see pool_balls.appearance), read from the picture's meta file.
     Each crop is moved and resized a little at random, like the detector's boxes.
+    With `blank`, everything outside the ball is grey (see blank_surroundings).
     """
-    import json
-
     from .check_data import read_names
     from .pool_balls import appearance
 
     names = read_names(data)
     rng = np.random.default_rng(seed)
     counts: dict[str, int] = {}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "crops.json").write_text(json.dumps({"blank_surroundings": blank}))
     for split in ("train", "val"):
         for label in sorted((data / "labels" / split).glob("*.txt")):
             img_path = data / "images" / split / f"{label.stem}.jpg"
@@ -137,6 +174,8 @@ def make_crops(data: Path, out: Path, size: int = CROP_SIZE, per_ball: int = 1, 
                     crop = crop_ball(bgr, box, size=size,
                                      shift=tuple(rng.normal(0, 0.06, 2)) if jitter else (0.0, 0.0),
                                      scale=float(rng.uniform(0.9, 1.15)) if jitter else 1.0)
+                    if blank:  # the circle stays where the (jittered) box says, like a real detector box
+                        crop = blank_surroundings(crop)
                     cv2.imwrite(str(folder / f"{label.stem}_{i}_{k}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
                     counts[f"{split}/{name}"] = counts.get(f"{split}/{name}", 0) + 1
     return counts
@@ -147,11 +186,12 @@ def crops_main(argv: list[str] | None = None) -> None:
     ap.add_argument("data", type=Path, help="a generated set (data/synth-pool2)")
     ap.add_argument("--out", type=Path, help="default: <data>-crops")
     ap.add_argument("--per-ball", type=int, default=1, help="crops per labelled ball (shifted a little)")
+    ap.add_argument("--keep-cloth", action="store_true", help="keep the cloth round each ball (the old way)")
     a = ap.parse_args(argv)
     out = a.out or a.data.with_name(a.data.name + "-crops")
     if out.exists():
         shutil.rmtree(out)  # always rebuilt from the set
-    counts = make_crops(a.data, out, per_ball=a.per_ball)
+    counts = make_crops(a.data, out, per_ball=a.per_ball, blank=not a.keep_cloth)
     train = sum(v for k, v in counts.items() if k.startswith("train/"))
     val = sum(v for k, v in counts.items() if k.startswith("val/"))
     print(f"{train} training crops, {val} check crops in {out}")
@@ -189,4 +229,8 @@ def train_main(argv: list[str] | None = None) -> None:
     out = Path("models") / f"{a.game}-reader.pt"
     out.parent.mkdir(exist_ok=True)
     shutil.copy(best, out)
+    # The reader must be used on the same kind of crop it learnt from.
+    crops = a.data / "crops.json"
+    blank = crops.exists() and bool(json.loads(crops.read_text()).get("blank_surroundings"))
+    _settings_file(out).write_text(json.dumps({"blank_surroundings": blank, "crops": str(a.data)}))
     print(f"\nbest reader: {out}   (scores in {best.parent.parent})")

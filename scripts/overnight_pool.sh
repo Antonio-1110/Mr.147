@@ -15,9 +15,9 @@ WIDTH=${WIDTH:-1920}          # full HD pictures, so the reader's close-ups have
 HEIGHT=${HEIGHT:-1080}
 EPOCHS=${EPOCHS:-20}
 IMAGE_SIZE=${IMAGE_SIZE:-960}
-BATCH=${BATCH:-4}             # 8 runs out of memory on an 8 GB Mac
+BATCH=${BATCH:-4}             # 8 runs out of memory on an 8 GB Mac; try 16 on a bigger computer
 READER_EPOCHS=${READER_EPOCHS:-15}
-DEVICE=${DEVICE:-mps}
+DEVICE=${DEVICE:-auto}        # auto: NVIDIA graphics card, else Apple chip, else CPU
 NAME=${NAME:-pool3}           # training run name (runs/$NAME)
 DATA=${DATA:-data/synth-$NAME}
 REAL=${REAL:-data/real-pool}
@@ -66,6 +66,12 @@ BEFORE=models/pool-before-$NAME.pt
 if [[ -f models/pool.pt && ! -f $BEFORE ]]; then
     cp models/pool.pt "$BEFORE"
     echo "saved models/pool.pt as $BEFORE"
+fi
+OLD_READER=models/pool-reader-before-$NAME.pt
+if [[ -f models/pool-reader.pt && ! -f $OLD_READER ]]; then
+    cp models/pool-reader.pt "$OLD_READER"
+    [[ -f models/pool-reader.json ]] && cp models/pool-reader.json "${OLD_READER%.pt}.json"
+    echo "saved models/pool-reader.pt as $OLD_READER"
 fi
 START_FROM=$BEFORE
 [[ -f "$START_FROM" ]] || START_FROM=yolo11n.pt
@@ -161,6 +167,8 @@ if [[ -f "$REAL/answer-key.json" ]]; then
     trap - ERR; set +e  # a scoring problem shouldn't hide the rest of the summary
     [[ -f $BEFORE ]] && $RUN python -m mr147.vision.score_key --model "$BEFORE" --key "$REAL/answer-key.json" --label "  old detector"
     $RUN python -m mr147.vision.score_key --model models/pool.pt --key "$REAL/answer-key.json" --label "  new detector"
+    [[ -f $OLD_READER ]] && $RUN python -m mr147.vision.score_key --model models/pool.pt --reader "$OLD_READER" \
+        --ball-set "$BALL_SET" --key "$REAL/answer-key.json" --label "  new detector + old reader"
     $RUN python -m mr147.vision.score_key --model models/pool.pt --reader models/pool-reader.pt --ball-set "$BALL_SET" \
         --key "$REAL/answer-key.json" --label "  new detector + reader"
     set -e; trap on_error ERR
@@ -170,7 +178,7 @@ echo "detector training scores: runs/$NAME/results.csv"
 tail -1 "runs/$NAME/results.csv" 2>/dev/null | awk -F, '{printf "  final mAP50 %.3f  mAP50-95 %.3f\n", $8, $9}' || true
 echo "reader training scores: runs/pool-reader/results.csv"
 tail -1 runs/pool-reader/results.csv 2>/dev/null | awk -F, '{printf "  final top-1 accuracy %.3f\n", $4}' || true
-echo "models: models/pool.pt (new detector, also models/pool-$NAME.pt), models/pool-reader.pt, old: $BEFORE"
+echo "models: models/pool.pt (new detector, also models/pool-$NAME.pt), models/pool-reader.pt, old: $BEFORE, $OLD_READER"
 echo "contact sheets: $REAL/pool-check-before*.jpg, -new*.jpg, -reader*.jpg"
 echo
 echo "DONE at $(date)"

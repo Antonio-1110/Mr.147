@@ -352,6 +352,10 @@ def random_look(rng: np.random.Generator, spec: TableSpec = SNOOKER) -> Look:
 
 def _setup_panda(width: int, height: int) -> None:
     display = "pandaegl" if sys.platform.startswith("linux") and not os.environ.get("DISPLAY") else "pandagl"
+    # pooltool (the physics) asks Panda3D for an OpenGL 3.2 context when it loads.
+    # That changes how our shaders and shadows render (dark cloth came out almost
+    # black), so ask for Panda's usual default context again, whatever loaded first.
+    loadPrcFileData("", "gl-version")
     loadPrcFileData(
         "",
         f"""
