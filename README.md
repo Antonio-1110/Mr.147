@@ -21,6 +21,16 @@ Training picks the fastest chip by itself: an NVIDIA graphics card, else the
 Apple chip, else the processor. With more memory than an 8 GB Mac, add
 `BATCH=16` to the overnight command so the detector trains faster.
 
+**Windows with an NVIDIA card.** Install uv with
+`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`,
+then `uv sync --extra train` as above. On Windows it takes PyTorch's CUDA
+build, so training runs on the graphics card. Check it with
+`uv run python -c "import torch; print(torch.cuda.is_available())"` (should say True).
+The overnight run is `scripts\overnight_pool.ps1` (batch sizes set for a 12 GB RTX 3060):
+
+    powershell -ExecutionPolicy Bypass -File scripts\overnight_pool.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\overnight_pool.ps1 -SkipGen -SkipDetector   # only the reader
+
 ## Ball vision: training pictures from the simulator
 
 The robot sees the table like a player does: cameras at head height, walking
