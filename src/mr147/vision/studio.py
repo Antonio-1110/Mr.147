@@ -118,6 +118,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--unsure-below", type=float, default=0.10,
                     help="a stripe ball is 'unsure' when less than this share of what you see is stripe")
     ap.add_argument("--blank", action="store_true", help="paint the cloth round the ball grey")
+    ap.add_argument("--render-size", type=int, default=STUDIO_PX, help="size of each render before cutting (pixels)")
     ap.add_argument("--keep-shadows", action="store_true",
                     help="redraw the shadows for every close-up (slower; try it if the graphics card complains)")
     ap.add_argument("--val", type=float, default=0.1, help="share of tables kept for checking")
@@ -132,7 +133,9 @@ def main(argv: list[str] | None = None) -> None:
     a.out.mkdir(parents=True)
     (a.out / "crops.json").write_text(json.dumps({"blank_surroundings": a.blank, "size": a.size,
                                                   "studio": True, "unsure_below": a.unsure_below}))
-    r = Renderer(STUDIO_PX, STUDIO_PX, seed=a.seed)
+    r = Renderer(a.render_size, a.render_size, seed=a.seed)
+    seen_shots: set[str] = set()
+    stuck = 0
     counts: dict[str, int] = {}
     seen_tables: set[str] = set()
     t0 = time.time()
@@ -169,6 +172,13 @@ def main(argv: list[str] | None = None) -> None:
                 half = math.tan(math.asin(R / dist)) * FRAME  # tan of half the view, so the ball is 1/FRAME wide
                 r.set_camera(CameraPose(pose.pos, tuple(centre), math.degrees(2 * math.atan(half)), pose.roll))
                 rgb, ids = r.render_frame(auto_exposure=False, frames=2 if a.keep_shadows else 1)
+                # Every shot has a new angle, so a picture seen before means the graphics card
+                # handed back an old picture: never label that.
+                stamp = hashlib.md5(rgb.tobytes()).hexdigest()
+                if stamp in seen_shots:
+                    stuck += 1
+                    continue
+                seen_shots.add(stamp)
                 outline = r.ball_outline(b)
                 if outline is None:
                     continue
@@ -198,7 +208,11 @@ def main(argv: list[str] | None = None) -> None:
                 counts[f"{split}/{name}"] = counts.get(f"{split}/{name}", 0) + 1
                 k += 1
         if (li + 1) % 10 == 0 or li + 1 == a.layouts:
-            print(f"{li + 1}/{a.layouts} tables, {k} close-ups, {k / (time.time() - t0):.1f} per second", flush=True)
+            print(f"{li + 1}/{a.layouts} tables, {k} close-ups, {k / (time.time() - t0):.1f} per second"
+                  + (f", {stuck} repeated pictures skipped" if stuck else ""), flush=True)
+            if stuck > max(50, k):
+                raise SystemExit("most pictures are repeats: the graphics card is not drawing the close-ups. "
+                                 "Try --keep-shadows or a bigger --render-size.")
     train = sum(v for c, v in counts.items() if c.startswith("train/"))
     val = sum(v for c, v in counts.items() if c.startswith("val/"))
     print(f"{train} training close-ups, {val} check close-ups in {a.out}")
