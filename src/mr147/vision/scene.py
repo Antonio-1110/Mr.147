@@ -356,6 +356,9 @@ def _setup_panda(width: int, height: int) -> None:
     # That changes how our shaders and shadows render (dark cloth came out almost
     # black), so ask for Panda's usual default context again, whatever loaded first.
     loadPrcFileData("", "gl-version")
+    # Some Windows/NVIDIA setups report a harmless GL error every few tables. After 20
+    # (Panda's default limit) Panda stops drawing for good and hands back old pictures,
+    # so the limit is raised; studio.py still drops any picture it has seen before.
     loadPrcFileData(
         "",
         f"""
@@ -366,6 +369,7 @@ def _setup_panda(width: int, height: int) -> None:
         framebuffer-multisample 1
         multisamples 4
         sync-video 0
+        gl-max-errors 1000000
         show-frame-rate-meter 0
         notify-level warning
         default-directnotify-level warning
