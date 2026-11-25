@@ -56,11 +56,12 @@ function Step($text) {
 }
 # Runs a project command with uv (the train extra keeps YOLO installed).
 # Stops the night if it fails, unless -NoStop.
+# "| Out-Host" so the log (Start-Transcript) keeps the output; Windows PowerShell 5.1 drops it otherwise.
 function Run {
-    & uv run --extra train @args
+    & uv run --extra train @args | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "'$($args -join ' ')' failed (exit code $LASTEXITCODE)" }
 }
-function RunNoStop { & uv run --extra train @args }
+function RunNoStop { & uv run --extra train @args | Out-Host }
 
 $Before = "models\pool-before-$Name.pt"
 $OldReader = "models\pool-reader-before-$Name.pt"
@@ -159,7 +160,7 @@ $Sources = @(Get-ChildItem $Real -File -ErrorAction SilentlyContinue |
     ForEach-Object { $_.FullName })
 function Check($tag) {
     $extra = $args
-    RunNoStop mr147-check-video @Sources --game pool --frames $Frames @extra --out "$Real\pool-check-$tag.jpg" |
+    & uv run --extra train mr147-check-video @Sources --game pool --frames $Frames @extra --out "$Real\pool-check-$tag.jpg" |
         Tee-Object -FilePath "logs\check-$tag.txt"
 }
 if ($Sources.Count -eq 0) {
