@@ -23,6 +23,7 @@ tell it either, and the robot then takes another look instead of guessing.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import shutil
@@ -82,6 +83,26 @@ def look_label(num: int, style, share: float | None, unsure_below: float) -> str
     return UNSURE if black_caps and dark_stripe else appearance(num, style.looks)
 
 
+def contact_sheet(out: Path, n: int = 64, seed: int = 0) -> Path | None:
+    """64 random close-ups with their names, in one picture, for a quick look."""
+    files = sorted(out.glob("train/*/*.jpg"))
+    if not files:
+        return None
+    pick = np.random.default_rng(seed).choice(len(files), min(n, len(files)), replace=False)
+    tiles = []
+    for i in pick:
+        im = cv2.resize(cv2.imread(str(files[i])), (128, 128), interpolation=cv2.INTER_NEAREST)
+        cv2.rectangle(im, (0, 0), (128, 14), (0, 0, 0), -1)
+        cv2.putText(im, files[i].parent.name[:16], (2, 11), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+        tiles.append(im)
+    while len(tiles) % 8:
+        tiles.append(np.zeros_like(tiles[0]))
+    sheet = np.vstack([np.hstack(tiles[k:k + 8]) for k in range(0, len(tiles), 8)])
+    path = out / "preview.jpg"
+    cv2.imwrite(str(path), sheet)
+    return path
+
+
 def _ball_number(name: str) -> int:
     return 0 if name == "cue" else int(name)
 
@@ -113,6 +134,7 @@ def main(argv: list[str] | None = None) -> None:
                                                   "studio": True, "unsure_below": a.unsure_below}))
     r = Renderer(STUDIO_PX, STUDIO_PX, seed=a.seed)
     counts: dict[str, int] = {}
+    seen_tables: set[str] = set()
     t0 = time.time()
     k = 0
     for li in range(a.layouts):
@@ -122,7 +144,15 @@ def main(argv: list[str] | None = None) -> None:
         r.build(balls, look, spec)
         # Expose for the whole table first, like the robot's camera does, then keep it.
         r.set_camera(random_camera(rng, spec))
-        r.render_frame(auto_exposure=True)
+        wide, _ = r.render_frame(auto_exposure=True)
+        # A new table must look different from the last one. On some graphics cards a
+        # GL error leaves the picture stuck on an old table: stop rather than fill the
+        # set with wrongly named close-ups.
+        stamp = hashlib.md5(cv2.resize(wide, (32, 32), interpolation=cv2.INTER_AREA).tobytes()).hexdigest()
+        if stamp in seen_tables:
+            raise SystemExit(f"table {li + 1}: the picture did not change from an earlier table, so the "
+                             "graphics card stopped drawing new tables. Run again with --keep-shadows.")
+        seen_tables.add(stamp)
         if not a.keep_shadows:
             r.freeze_shadows()  # nothing moves from here on (a ball turning on the spot casts the same shadow)
         R = spec.ball_r
@@ -172,6 +202,9 @@ def main(argv: list[str] | None = None) -> None:
     train = sum(v for c, v in counts.items() if c.startswith("train/"))
     val = sum(v for c, v in counts.items() if c.startswith("val/"))
     print(f"{train} training close-ups, {val} check close-ups in {a.out}")
+    sheet = contact_sheet(a.out)
+    if sheet is not None:
+        print(f"look at {sheet}: the close-ups should show many different tables, each named at the top")
     print("per look: " + ", ".join(f"{n} {counts.get('train/' + n, 0)}"
                                    for n in sorted({c.split('/')[1] for c in counts})))
 
