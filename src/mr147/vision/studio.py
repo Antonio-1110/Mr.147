@@ -43,7 +43,7 @@ from .scene import CameraPose, Renderer, random_camera, random_look
 UNSURE = "unsure"  # reader class: a stripe ball showing (almost) only its caps
 STUDIO_PX = 192  # render size; the ball is about STUDIO_PX / FRAME pixels wide in it
 FRAME = 2.2  # render width / ball width (room for the crop's shift and size jitter)
-MIN_VISIBLE = 0.30  # like the full-table labels: at least 30% of the ball in view
+MIN_VISIBLE = 0.55  # more than half the ball in view: a mostly hidden ball only teaches the reader its neighbour
 
 
 def stripe_share(cam: np.ndarray, centre: np.ndarray, radius: float, pole: np.ndarray,
