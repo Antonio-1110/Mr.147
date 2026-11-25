@@ -42,7 +42,7 @@ $env:PYTHONIOENCODING = "utf-8"
 Add-Type -Namespace Mr147 -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);
 '@
-[void][Mr147.Power]::SetThreadExecutionState(0x80000003)  # CONTINUOUS | SYSTEM | DISPLAY
+[void][Mr147.Power]::SetThreadExecutionState([uint32]2147483651)  # CONTINUOUS | SYSTEM | DISPLAY
 
 New-Item -ItemType Directory -Force logs, models | Out-Null
 $Log = "logs\overnight-pool-$(Get-Date -Format yyyyMMdd-HHmm).log"
@@ -146,7 +146,7 @@ try {
         Write-Host "the new detector is saved (models\pool.pt). To redo only the reader: add -SkipGen -SkipDetector"
     }
     Stop-Transcript | Out-Null
-    [void][Mr147.Power]::SetThreadExecutionState(0x80000000)
+    [void][Mr147.Power]::SetThreadExecutionState([uint32]2147483648)
     exit 1
 }
 
@@ -214,4 +214,4 @@ Write-Host "contact sheets: $Real\pool-check-before*.jpg, -new*.jpg, -reader*.jp
 Write-Host ""
 Write-Host "DONE at $(Get-Date)"
 Stop-Transcript | Out-Null
-[void][Mr147.Power]::SetThreadExecutionState(0x80000000)
+[void][Mr147.Power]::SetThreadExecutionState([uint32]2147483648)
