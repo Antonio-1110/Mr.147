@@ -56,10 +56,19 @@ def _settings_file(weights: str | Path) -> Path:
     return Path(weights).with_suffix(".json")
 
 
+def _settings(weights: str | Path) -> dict:
+    f = _settings_file(weights)
+    return json.loads(f.read_text()) if f.exists() else {}
+
+
 def reader_blanks_surroundings(weights: str | Path) -> bool:
     """Was this reader trained on crops with a grey surround? (older readers: no settings file, no)"""
-    f = _settings_file(weights)
-    return f.exists() and bool(json.loads(f.read_text()).get("blank_surroundings"))
+    return bool(_settings(weights).get("blank_surroundings"))
+
+
+def reader_crop_size(weights: str | Path) -> int:
+    """Close-up size this reader learnt on (older readers: 128)."""
+    return int(_settings(weights).get("size", CROP_SIZE))
 
 
 def crop_ball(image: np.ndarray, box, pad: float = PAD, size: int = CROP_SIZE,
@@ -86,16 +95,17 @@ class BallReader:
         self.names = self.model.names
         self.device = device
         self.blank = reader_blanks_surroundings(weights) if blank is None else blank
+        self.size = reader_crop_size(weights)
 
     def read(self, image: np.ndarray, boxes: list) -> list[dict[str, float]]:
         """For each box in the RGB image: ball name -> probability."""
         if not boxes:
             return []
         bgr = np.ascontiguousarray(image[..., ::-1])
-        crops = [crop_ball(bgr, b) for b in boxes]
+        crops = [crop_ball(bgr, b, size=self.size) for b in boxes]
         if self.blank:
             crops = [blank_surroundings(c) for c in crops]
-        results = self.model.predict(crops, imgsz=CROP_SIZE, device=self.device, verbose=False)
+        results = self.model.predict(crops, imgsz=self.size, device=self.device, verbose=False)
         return [{self.names[i]: float(p) for i, p in enumerate(r.probs.data.tolist())} for r in results]
 
 
@@ -105,6 +115,8 @@ def reread(found: list, image: np.ndarray, reader: BallReader, keep: float = 0.0
 
     The reader says how a ball looks ("purple", "pink-stripe"); `ball_set` turns that
     into a number (pool_balls.LOOK_TO_NUMBER). Looks that mean the same number add up.
+    "unsure" (a stripe seen from its cap, see studio.py) gives no number: the ball keeps
+    the numbers the other looks give, with low scores, so the robot knows to look again.
     """
     from .detector import PixelDetection
     from .pool_balls import appearance_to_number
@@ -114,6 +126,8 @@ def reread(found: list, image: np.ndarray, reader: BallReader, keep: float = 0.0
     for d, probs in zip(balls, reader.read(image, [d.box for d in balls])):
         numbers: dict[str, float] = {}
         for look, p in probs.items():
+            if look == "unsure":
+                continue
             n = appearance_to_number(look, ball_set)
             numbers[n] = numbers.get(n, 0.0) + p
         ranked = sorted(((n, p) for n, p in numbers.items() if p >= keep), key=lambda kv: -kv[1])
@@ -143,7 +157,7 @@ def make_crops(data: Path, out: Path, size: int = CROP_SIZE, per_ball: int = 1, 
     rng = np.random.default_rng(seed)
     counts: dict[str, int] = {}
     out.mkdir(parents=True, exist_ok=True)
-    (out / "crops.json").write_text(json.dumps({"blank_surroundings": blank}))
+    (out / "crops.json").write_text(json.dumps({"blank_surroundings": blank, "size": size}))
     for split in ("train", "val"):
         for label in sorted((data / "labels" / split).glob("*.txt")):
             img_path = data / "images" / split / f"{label.stem}.jpg"
@@ -187,11 +201,12 @@ def crops_main(argv: list[str] | None = None) -> None:
     ap.add_argument("--out", type=Path, help="default: <data>-crops")
     ap.add_argument("--per-ball", type=int, default=1, help="crops per labelled ball (shifted a little)")
     ap.add_argument("--keep-cloth", action="store_true", help="keep the cloth round each ball (the old way)")
+    ap.add_argument("--size", type=int, default=CROP_SIZE, help="close-up size in pixels")
     a = ap.parse_args(argv)
     out = a.out or a.data.with_name(a.data.name + "-crops")
     if out.exists():
         shutil.rmtree(out)  # always rebuilt from the set
-    counts = make_crops(a.data, out, per_ball=a.per_ball, blank=not a.keep_cloth)
+    counts = make_crops(a.data, out, size=a.size, per_ball=a.per_ball, blank=not a.keep_cloth)
     train = sum(v for k, v in counts.items() if k.startswith("train/"))
     val = sum(v for k, v in counts.items() if k.startswith("val/"))
     print(f"{train} training crops, {val} check crops in {out}")
@@ -219,18 +234,21 @@ def train_main(argv: list[str] | None = None) -> None:
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--out", type=Path, help="where to save the reader (default: models/<game>-reader.pt)")
     a = ap.parse_args(argv)
+    out = a.out or Path("models") / f"{a.game}-reader.pt"
     device = pick_device() if a.device == "auto" else a.device
+    crops_file = a.data / "crops.json"
+    crops = json.loads(crops_file.read_text()) if crops_file.exists() else {}
+    size = int(crops.get("size", CROP_SIZE))
     model = YOLO(a.start_from)
-    model.train(data=str(a.data.resolve()), epochs=a.epochs, imgsz=CROP_SIZE, batch=a.batch, device=device,
-                project=str(Path("runs").resolve()), name=f"{a.game}-reader", exist_ok=True,
+    model.train(data=str(a.data.resolve()), epochs=a.epochs, imgsz=size, batch=a.batch, device=device,
+                project=str(Path("runs").resolve()), name=f"{a.game}-reader-{out.stem}" if a.out else f"{a.game}-reader", exist_ok=True,
                 deterministic=False, **reader_settings())
     best = Path(model.trainer.best)
-    out = Path("models") / f"{a.game}-reader.pt"
-    out.parent.mkdir(exist_ok=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(best, out)
     # The reader must be used on the same kind of crop it learnt from.
-    crops = a.data / "crops.json"
-    blank = crops.exists() and bool(json.loads(crops.read_text()).get("blank_surroundings"))
-    _settings_file(out).write_text(json.dumps({"blank_surroundings": blank, "crops": str(a.data)}))
+    _settings_file(out).write_text(json.dumps({"blank_surroundings": bool(crops.get("blank_surroundings")),
+                                               "size": size, "crops": str(a.data)}))
     print(f"\nbest reader: {out}   (scores in {best.parent.parent})")

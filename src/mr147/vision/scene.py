@@ -648,7 +648,19 @@ class Renderer:
         img = np.frombuffer(bytes(data), np.uint8).reshape(tex.getYSize(), tex.getXSize(), 3)
         return img[::-1].copy()  # Panda's rows start at the bottom
 
-    def render_frame(self, auto_exposure: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    def freeze_shadows(self, frozen: bool = True) -> None:
+        """Stop (or restart) redrawing the lamps' shadow maps every frame.
+
+        While nothing on the table moves, the shadows stay the same, and redrawing
+        them (a 2048 x 2048 picture per lamp) costs more than a small close-up.
+        """
+        gsg = self.base.win.getGsg()
+        for lamp in getattr(self, "_lamps", []):
+            buf = lamp.getShadowBuffer(gsg)
+            if buf is not None:
+                buf.setActive(not frozen)
+
+    def render_frame(self, auto_exposure: bool = True, frames: int = 2) -> tuple[np.ndarray, np.ndarray]:
         """Returns (rgb image, per-pixel ball index).
 
         Like a real camera's auto-exposure, the lights are scaled so the cloth comes
@@ -659,8 +671,8 @@ class Renderer:
         too_bright = math.inf  # lowest exposure seen that burnt the cloth out
         cloth = None
         for attempt in range(8):
-            self.base.graphicsEngine.renderFrame()
-            self.base.graphicsEngine.renderFrame()  # second frame so shadows are up to date
+            for _ in range(frames):  # a second frame so shadows are up to date
+                self.base.graphicsEngine.renderFrame()
             rgb = self._grab(self.color_tex)
             if not auto_exposure:
                 break
