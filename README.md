@@ -2,6 +2,35 @@
 
 A robot that plays snooker. Simulation first, real robot later.
 
+## Setting up on a new computer
+
+Needs [uv](https://docs.astral.sh/uv/) (Mac: `brew install uv`) and git.
+
+    git clone https://github.com/Antonio-1110/Mr.147.git
+    cd Mr.147
+    uv sync --extra train     # Python, the simulator and YOLO
+    uv run pytest -q          # every test should pass
+
+GitHub only has the code. Your own photos, clips, answer key and trained models
+are too big for it: copy `data/real-pool/` and `models/` from the old computer
+(the zip `mr147-files-for-new-computer.zip` holds both) and unzip it inside the
+`Mr.147` folder. Training pictures (`data/synth-*`) are made again on the new
+computer by `scripts/overnight_pool.sh`.
+
+Training picks the fastest chip by itself: an NVIDIA graphics card, else the
+Apple chip, else the processor. With more memory than an 8 GB Mac, add
+`BATCH=16` to the overnight command so the detector trains faster.
+
+**Windows with an NVIDIA card.** Install uv with
+`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`,
+then `uv sync --extra train` as above. On Windows it takes PyTorch's CUDA
+build, so training runs on the graphics card. Check it with
+`uv run python -c "import torch; print(torch.cuda.is_available())"` (should say True).
+The overnight run is `scripts\overnight_pool.ps1` (batch sizes set for a 12 GB RTX 3060):
+
+    powershell -ExecutionPolicy Bypass -File scripts\overnight_pool.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\overnight_pool.ps1 -SkipGen -SkipDetector   # only the reader
+
 ## Ball vision: training pictures from the simulator
 
 The robot sees the table like a player does: cameras at head height, walking
@@ -42,6 +71,12 @@ lighting, cloth shade (always green for snooker, blue for pool), wood and room c
 noise, exposure and JPEG quality.
 
 Code lives in `src/mr147/vision/`. Run the checks with `uv run pytest`.
+
+**The reader sees only the ball.** Before the close-up reader looks at a ball,
+everything outside the ball's circle is painted grey. A reader that also saw the
+cloth learnt that a blue ring round a black ball means "the blue 10, seen from
+its black cap", so on blue cloth the black 8 came out as a 10. Readers trained
+before this change still get the cloth (they have no `pool-reader.json`).
 
 ## Training the detector
 

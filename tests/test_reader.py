@@ -118,3 +118,28 @@ def test_chalk_on_the_rail_and_balls_on_another_table_are_dropped():
     far = PixelDetection("9", (600, 80, 610, 90), 0.8)  # on the other table
     kept = on_cloth(ours + [chalk, far], img)
     assert kept == ours
+
+
+def test_reader_sees_only_the_ball_not_the_cloth():
+    from mr147.vision.reader import SURROUND, blank_surroundings
+
+    img = np.zeros((600, 600, 3), np.uint8)
+    img[:] = (220, 110, 20)  # blue cloth (BGR)
+    yy, xx = np.mgrid[:600, :600]
+    img[(xx - 300) ** 2 + (yy - 300) ** 2 <= 30 ** 2] = (15, 15, 15)  # a black ball, 60 px wide
+    crop = blank_surroundings(crop_ball(img, (270, 270, 330, 330)))
+    c = CROP_SIZE // 2
+    assert (crop[c - 15:c + 15, c - 15:c + 15] < 40).all()  # the ball is untouched
+    assert (crop[:5, :5] == SURROUND).all() and (crop[-5:, -5:] == SURROUND).all()  # no cloth left in the corners
+    blue = (crop[..., 0] > 150) & (crop[..., 2] < 80)
+    assert blue.mean() < 0.03  # at most a thin rim of cloth where the circle is a little bigger than the ball
+
+
+def test_a_reader_is_used_on_the_kind_of_crop_it_learnt_from(tmp_path):
+    from mr147.vision.reader import reader_blanks_surroundings
+
+    old = tmp_path / "pool-reader-old.pt"  # trained before the grey surround: no settings file
+    assert not reader_blanks_surroundings(old)
+    new = tmp_path / "pool-reader.pt"
+    new.with_suffix(".json").write_text('{"blank_surroundings": true}')
+    assert reader_blanks_surroundings(new)

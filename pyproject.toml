@@ -27,7 +27,8 @@ mr147-train-reader = "mr147.vision.reader:train_main"
 
 [project.optional-dependencies]
 # Only needed to train or run the YOLO detector: uv sync --extra train
-train = ["ultralytics>=8.3"]
+# torch/torchvision are listed so Windows can take them from the CUDA index below.
+train = ["ultralytics>=8.3", "torch>=2.4", "torchvision>=0.19"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -43,9 +44,22 @@ name = "panda3d-archive"
 url = "https://archive.panda3d.org/simple/"
 explicit = true
 
+# On Windows, PyPI's PyTorch only uses the processor. Take the NVIDIA (CUDA) build
+# from PyTorch's own index instead. Mac and Linux keep PyPI (Linux's already has CUDA).
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
 [tool.uv.sources]
 panda3d = [
     { index = "panda3d-archive", marker = "sys_platform != 'darwin'" },
+]
+torch = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'win32'" },
 ]
 
 [tool.uv]

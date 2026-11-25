@@ -135,6 +135,12 @@ def test_a_generated_set_passes_the_training_checks(tmp_path):
     assert meta["look"]["pool_balls"]["ball_set"] in ("traditional", "modern")
     one = next((tmp_path / "crops").glob("*/*/*.jpg"))
     assert cv2.imread(str(one)).shape == (128, 128, 3)
+    assert json.loads((tmp_path / "crops" / "crops.json").read_text())["blank_surroundings"]
+    # ...and the trainer still finds its train and check folders next to that settings file.
+    from ultralytics.data.utils import check_cls_dataset
+
+    found = check_cls_dataset(str(tmp_path / "crops"))
+    assert found["nc"] == len(list((tmp_path / "crops" / "train").iterdir()))
 
 
 def test_check_dataset_catches_broken_labels(tmp_path):
