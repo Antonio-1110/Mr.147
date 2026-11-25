@@ -97,6 +97,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--unsure-below", type=float, default=0.10,
                     help="a stripe ball is 'unsure' when less than this share of what you see is stripe")
     ap.add_argument("--blank", action="store_true", help="paint the cloth round the ball grey")
+    ap.add_argument("--keep-shadows", action="store_true",
+                    help="redraw the shadows for every close-up (slower; try it if the graphics card complains)")
     ap.add_argument("--val", type=float, default=0.1, help="share of tables kept for checking")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args(argv)
@@ -121,7 +123,8 @@ def main(argv: list[str] | None = None) -> None:
         # Expose for the whole table first, like the robot's camera does, then keep it.
         r.set_camera(random_camera(rng, spec))
         r.render_frame(auto_exposure=True)
-        r.freeze_shadows()  # nothing moves from here on (a ball turning on the spot casts the same shadow)
+        if not a.keep_shadows:
+            r.freeze_shadows()  # nothing moves from here on (a ball turning on the spot casts the same shadow)
         R = spec.ball_r
         for i, b in enumerate(balls):
             num = _ball_number(b.name)
@@ -135,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
                 dist = float(np.linalg.norm(cam - centre))
                 half = math.tan(math.asin(R / dist)) * FRAME  # tan of half the view, so the ball is 1/FRAME wide
                 r.set_camera(CameraPose(pose.pos, tuple(centre), math.degrees(2 * math.atan(half)), pose.roll))
-                rgb, ids = r.render_frame(auto_exposure=False, frames=1)
+                rgb, ids = r.render_frame(auto_exposure=False, frames=2 if a.keep_shadows else 1)
                 outline = r.ball_outline(b)
                 if outline is None:
                     continue

@@ -451,6 +451,7 @@ class Renderer:
         self.spec = spec
         # Panda3D keeps a lamp's shadow buffer alive after the lamp is removed, so
         # each rebuild would leave buffers that still render every frame (big slowdown).
+        self.freeze_shadows(False)  # a frozen (inactive) shadow buffer might not be let go
         for lamp in getattr(self, "_lamps", []):
             lamp.setShadowCaster(False)
         self._lamps = []
