@@ -58,7 +58,8 @@ class RobotCamera(Protocol):
 
 @dataclass
 class VisionSettings:
-    min_pockets_for_pose: int = 3  # fewer pockets than this: trust the robot's own pose
+    min_pockets_for_pose: int = 2  # fewer pockets than this: trust the robot's own pose
+    # (2 are enough: the body knows the head's height and roll, see locate.BodySense)
     no_pose_fix_penalty: float = 0.6  # confidence multiplier when the pose couldn't be checked
     far_distance: float = 3.0  # metres; balls further away get a little less confidence
     same_ball_distance: float = 0.045  # metres; two looks this close are the same ball

@@ -206,7 +206,7 @@ def summary(res: Result, s: Settings, w: int, h: int, seconds: float) -> str:
                    else f"  over {lo:.1f} m".ljust(30) + _stats(col["error_mm"][m]))
     out.append("By pockets used to fix the pose:")
     p = col["pockets"]
-    for lo, hi, name in ((0, 3, "0-2 (no fix)"), (3, 4, "3"), (4, 9, "4 or more")):
+    for lo, hi, name in ((0, 2, "0-1 (no fix)"), (2, 3, "2"), (3, 4, "3"), (4, 9, "4 or more")):
         m = (p >= lo) & (p < hi)
         out.append(f"  {name}".ljust(30) + _stats(col["error_mm"][m]))
     out.append("By how much of the ball shows:")
@@ -216,7 +216,7 @@ def summary(res: Result, s: Settings, w: int, h: int, seconds: float) -> str:
         out.append(f"  {name}".ljust(30) + _stats(col["error_mm"][m]))
     v = res.views
     pe = np.array([x["pose_error_mm"] for x in v])
-    fixed = np.array([x["pockets"] >= 3 for x in v])
+    fixed = np.array([x["pockets"] >= 2 for x in v])
     out += ["",
             f"Pictures: {len(v)}. Pose fixed by pockets in {fixed.sum()} ({100 * fixed.mean():.0f}%).",
             f"Camera position error after the fix: middle {np.median(pe[fixed]) if fixed.any() else math.nan:.1f} mm"
