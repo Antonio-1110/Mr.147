@@ -109,6 +109,14 @@ class BallReader:
         return [{self.names[i]: float(p) for i, p in enumerate(r.probs.data.tolist())} for r in results]
 
 
+def cut_by_edge(box, width: int, height: int, margin: float = 2.0, squash: float = 0.85) -> bool:
+    """Is this ball cut off by the picture's edge? (box touches it and is no longer round)"""
+    x0, y0, x1, y1 = box
+    touches = x0 <= margin or y0 <= margin or x1 >= width - margin or y1 >= height - margin
+    bw, bh = x1 - x0, y1 - y0
+    return touches and min(bw, bh) < squash * max(bw, bh)
+
+
 def reread(found: list, image: np.ndarray, reader: BallReader, keep: float = 0.01,
            ball_set: str = "traditional") -> list:
     """Replace each ball's name and alternatives with what the reader says (pockets untouched).
@@ -117,19 +125,23 @@ def reread(found: list, image: np.ndarray, reader: BallReader, keep: float = 0.0
     into a number (pool_balls.LOOK_TO_NUMBER). Looks that mean the same number add up.
     "unsure" (a stripe seen from its cap, see studio.py) gives no number: the ball keeps
     the numbers the other looks give, with low scores, so the robot knows to look again.
+    A ball cut off by the picture's edge is treated the same way: its close-up is half
+    smeared edge pixels, so its scores are cut to a fifth.
     """
     from .detector import PixelDetection
     from .pool_balls import appearance_to_number
 
     balls = [d for d in found if d.name != "pocket"]
     out = [d for d in found if d.name == "pocket"]
+    h, w = image.shape[:2]
     for d, probs in zip(balls, reader.read(image, [d.box for d in balls])):
+        trust = 0.2 if cut_by_edge(d.box, w, h) else 1.0
         numbers: dict[str, float] = {}
         for look, p in probs.items():
             if look == "unsure":
                 continue
             n = appearance_to_number(look, ball_set)
-            numbers[n] = numbers.get(n, 0.0) + p
+            numbers[n] = numbers.get(n, 0.0) + p * trust
         ranked = sorted(((n, p) for n, p in numbers.items() if p >= keep), key=lambda kv: -kv[1])
         if not ranked:
             out.append(d)

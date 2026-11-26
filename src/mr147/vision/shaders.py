@@ -43,6 +43,11 @@ uniform struct {
     vec4 ambient; vec4 diffuse; vec4 emission; vec3 specular; float shininess;
 } p3d_Material;
 uniform sampler2D p3d_Texture0;
+// Reflections of the surroundings on shiny balls: the cloth below and the room above.
+uniform mat4 trans_world_to_apiview;
+uniform vec4 env_floor;   // cloth colour as it comes out in the picture
+uniform vec4 env_sky;     // room colour
+uniform vec4 env_gloss;   // x: how strongly this object mirrors its surroundings (0 = not at all)
 varying vec3 v_pos;
 varying vec3 v_nrm;
 varying vec2 v_uv;
@@ -72,6 +77,17 @@ void main() {
         vec3 h = normalize(l + v);
         float spec = ndl > 0.0 ? pow(max(dot(n, h), 0.0), p3d_Material.shininess) : 0.0;
         col += lc * atten * shadow * (base * ndl + p3d_Material.specular * spec);
+    }
+    if (env_gloss.x > 0.0) {
+        // Real balls mirror the cloth round their lower edge (a black 8 on blue cloth has
+        // a blue rim) and the room above. Fresnel: little head-on, strong at grazing angles.
+        vec3 up = normalize((trans_world_to_apiview * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+        vec3 r = reflect(-v, n);
+        vec3 env = mix(env_floor.rgb, env_sky.rgb, smoothstep(-0.15, 0.25, dot(r, up)));
+        float fres = 0.2 + 0.8 * pow(1.0 - max(dot(n, v), 0.0), 2.0);  // stronger than ideal resin: matched to the real 8 on blue cloth (camera haze and blur add to it)
+        col += env_gloss.x * fres * env;
+        // Light bounced off the cloth onto the ball's underside.
+        col += 0.25 * env_gloss.x * base * env_floor.rgb * max(-dot(n, up), 0.0);
     }
     gl_FragColor = vec4(col, 1.0);
 }
