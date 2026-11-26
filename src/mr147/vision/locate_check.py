@@ -38,7 +38,7 @@ from . import table as T
 from .augment import camera_effects
 from .generate import label_view
 from .layouts import random_layout
-from .locate import PinholeCamera, ball_position, refine_pose
+from .locate import PinholeCamera, ball_position, fuse_looks, refine_pose
 from .scene import CameraPose, random_camera, random_look
 
 
@@ -53,15 +53,20 @@ class Settings:
     seed: int = 0
     model: str | None = None  # trained YOLO finder; None = boxes straight from the simulator
     device: str | None = None
+    refine: bool = False  # tighten each box to the ball's real edge (refine.py)
 
 
 @dataclass
 class Result:
     rows: list[dict] = field(default_factory=list)  # one per ball found
     views: list[dict] = field(default_factory=list)  # one per picture
+    refined: int = 0  # boxes the edge refinement tightened (the rest kept the finder's box)
     missed: int = 0  # balls in clear view the finder didn't find
     false_finds: int = 0  # "balls" that aren't there
     examples: list[np.ndarray] = field(default_factory=list)
+    # Balls seen (3+ pockets) in two or more pictures of the same table, combined:
+    # (error of plain average mm, error weighing each look along its line of sight mm, best single look mm)
+    combined: list[tuple[float, float, float]] = field(default_factory=list)
 
 
 def rough_pose(pose: CameraPose, rng: np.random.Generator, e: float, roll: float) -> CameraPose:
@@ -110,6 +115,7 @@ def run(renderer, s: Settings, detector=None, keep_examples: int = 6) -> Result:
     w, h = renderer.w, renderer.h
     res = Result()
     for ti in range(s.tables):
+        seen: dict[int, list] = {}  # ball index -> [(position, camera position), ...] from trusted looks
         balls = random_layout(rng, spec)
         renderer.build(balls, random_look(rng, spec), spec)
         for vi in range(s.views):
@@ -127,6 +133,12 @@ def run(renderer, s: Settings, detector=None, keep_examples: int = 6) -> Result:
                 found, missed, false = match_to_truth([d.box for d in dets if d.name != "pocket"], info)
             res.missed += missed
             res.false_finds += false
+            if s.refine:
+                from .refine import refine_ball_box
+
+                tightened = [(i, *refine_ball_box(image, box)) for i, box in found]
+                res.refined += sum(ok for _, _, ok in tightened)
+                found = [(i, tuple(b)) for i, b, _ in tightened]
 
             true_cam = PinholeCamera.from_pose(pose, w, h)
             rough_cam = PinholeCamera.from_pose(rough_pose(pose, rng, s.pose_error_m, s.roll_error_deg), w, h)
@@ -155,8 +167,18 @@ def run(renderer, s: Settings, detector=None, keep_examples: int = 6) -> Result:
                     box_px=round(float(box[2] - box[0]), 1), visible=e["visible_frac"],
                     in_picture=e.get("in_frame_frac", 1.0), pockets=fit.pockets_used))
                 shown.append((b, xy["robot"]))
+                if fit.pockets_used >= 3:
+                    seen.setdefault(i, []).append((xy["robot"], robot_cam.position))
             if len(res.examples) < keep_examples:
                 res.examples.append(draw_view(image, true_cam, robot_cam, shown, spec, ti, vi, fit.pockets_used))
+        for i, looks in seen.items():
+            if len(looks) < 2:
+                continue
+            true_xy = (balls[i].x, balls[i].y)
+            mean = np.mean([p for p, _ in looks], axis=0)
+            res.combined.append((1000 * math.dist(mean, true_xy),
+                                 1000 * math.dist(fuse_looks(looks, spec.ball_r), true_xy),
+                                 1000 * min(math.dist(p, true_xy) for p, _ in looks)))
     return res
 
 
@@ -178,6 +200,8 @@ def summary(res: Result, s: Settings, w: int, h: int, seconds: float) -> str:
     rows = res.rows
     col = {k: np.array([r[k] for r in rows], float) for k in rows[0] if k != "ball"} if rows else {}
     finder = f"trained finder {s.model}" if s.model else f"simulator boxes (+{s.box_noise_px} px wobble)"
+    if s.refine:
+        finder += ", then tightened to the ball's edge"
     out = [
         f"Ball position check - {s.game}, {s.tables} tables x {s.views} views, {w}x{h} pictures",
         f"Boxes from: {finder}",
@@ -191,38 +215,48 @@ def summary(res: Result, s: Settings, w: int, h: int, seconds: float) -> str:
     ]
     if not rows:
         return "\n".join(out + ["No balls were placed."])
+    good = col["pockets"] >= 3
     out += [HEAD,
-            "What the robot gets          " + _stats(col["error_mm"]),
-            "  if its pose were perfect   " + _stats(col["error_perfect_pose_mm"]),
+            "3+ pockets (robot trusts)    " + _stats(col["error_mm"][good]),
+            "  if its pose were perfect   " + _stats(col["error_perfect_pose_mm"][good]),
+            "All pictures                 " + _stats(col["error_mm"]),
             "  without the pocket fix     " + _stats(col["error_no_fix_mm"]),
             ""]
+    if s.refine:
+        out += [f"Edge tightening worked on {res.refined} of {len(rows)} balls (the rest kept their box).", ""]
     if s.model:
         out += [f"Finder: missed {res.missed} balls in clear view, {res.false_finds} false balls.", ""]
-    out.append("By distance from the camera (what the robot gets):")
+    if res.combined:
+        c = np.array(res.combined)
+        out += [f"Balls seen (3+ pockets) in 2 or more pictures of the same table, combined:",
+                "  plain average              " + _stats(c[:, 0]),
+                "  weighing lines of sight    " + _stats(c[:, 1]),
+                "  best single look (cheat)   " + _stats(c[:, 2]), ""]
+    out.append("By distance from the camera (3+ pockets):")
     d = col["distance_m"]
     for lo, hi in ((0, 1.5), (1.5, 2.5), (2.5, 9)):
-        m = (d >= lo) & (d < hi)
+        m = (d >= lo) & (d < hi) & good
         out.append(f"  {lo:.1f}-{hi:.1f} m".ljust(30) + _stats(col["error_mm"][m]) if hi < 9
                    else f"  over {lo:.1f} m".ljust(30) + _stats(col["error_mm"][m]))
     out.append("By pockets used to fix the pose:")
     p = col["pockets"]
-    for lo, hi, name in ((0, 2, "0-1 (no fix)"), (2, 3, "2"), (3, 4, "3"), (4, 9, "4 or more")):
+    for lo, hi, name in ((0, 3, "0-2 (would look again)"), (3, 4, "3"), (4, 9, "4 or more")):
         m = (p >= lo) & (p < hi)
         out.append(f"  {name}".ljust(30) + _stats(col["error_mm"][m]))
-    out.append("By how much of the ball shows:")
+    out.append("By how much of the ball shows (3+ pockets):")
     vis, inpic = col["visible"], col["in_picture"]
     for m, name in ((vis >= 0.95, "fully in view"), ((vis < 0.95) & (inpic >= 0.95), "partly behind another ball"),
                     (inpic < 0.95, "cut by the picture edge")):
-        out.append(f"  {name}".ljust(30) + _stats(col["error_mm"][m]))
+        out.append(f"  {name}".ljust(30) + _stats(col["error_mm"][m & good]))
     v = res.views
     pe = np.array([x["pose_error_mm"] for x in v])
-    fixed = np.array([x["pockets"] >= 2 for x in v])
+    fixed = np.array([x["pockets"] >= 3 for x in v])
     out += ["",
             f"Pictures: {len(v)}. Pose fixed by pockets in {fixed.sum()} ({100 * fixed.mean():.0f}%).",
             f"Camera position error after the fix: middle {np.median(pe[fixed]) if fixed.any() else math.nan:.1f} mm"
             f" (before: {np.median([x['rough_error_mm'] for x in v]):.0f} mm)."]
-    worst = sorted(rows, key=lambda r: -r["error_mm"])[:5]
-    out += ["", "Worst balls:"] + [
+    worst = sorted((r for r in rows if r["pockets"] >= 3), key=lambda r: -r["error_mm"])[:5]
+    out += ["", "Worst balls (3+ pockets):"] + [
         f"  table {r['table']} view {r['view']} ball {r['ball']}: {r['error_mm']:.0f} mm, {r['distance_m']:.1f} m away, "
         f"{r['pockets']} pockets, {100 * r['visible']:.0f}% showing" for r in worst]
     return "\n".join(out)
@@ -296,13 +330,15 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--box-noise", type=float, default=0.5, help="pixels; simulator boxes only")
     ap.add_argument("--model", help="trained finder (YOLO .pt); default: boxes from the simulator")
     ap.add_argument("--device", help="e.g. 0 for the graphics card, cpu")
+    ap.add_argument("--refine", action="store_true", help="tighten each box to the ball's edge")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, help="default: results/locate-<game>[-model]")
     a = ap.parse_args(argv)
 
     from .scene import Renderer
 
-    s = Settings(a.game, a.tables, a.views, a.pose_error, a.roll_error, a.box_noise, a.seed, a.model, a.device)
+    s = Settings(a.game, a.tables, a.views, a.pose_error, a.roll_error, a.box_noise, a.seed, a.model, a.device,
+                 a.refine)
     detector = None
     if a.model:
         from .detector import YoloDetector

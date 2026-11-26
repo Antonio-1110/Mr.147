@@ -105,7 +105,7 @@ def test_two_pockets_fix_the_pose_when_the_body_knows_height_and_roll():
              and b[0] > 0 and b[1] > 0 and b[2] < 1280 and b[3] < 720]
     boxes = boxes[:2]
     assert len(boxes) == 2
-    fit = refine_pose(rough, boxes)
+    fit = refine_pose(rough, boxes, min_landmarks=2)
     assert fit.pockets_used == 2
     # Balls land much closer to where they really are.
     spots = [(0.0, 0.0), (1.0, 0.5), (-1.0, 0.5), (1.5, -0.7)]
@@ -116,4 +116,5 @@ def test_two_pockets_fix_the_pose_when_the_body_knows_height_and_roll():
 
     assert error(fit.camera) < error(rough) / 3
     # The pockets-only fit (the old way) can't use just two.
-    assert refine_pose(rough, boxes, body=None).camera is rough
+    assert refine_pose(rough, boxes, body=None, min_landmarks=2).camera is rough
+    assert refine_pose(rough, boxes).camera is rough  # default: 3 pockets wanted

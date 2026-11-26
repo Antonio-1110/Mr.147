@@ -216,17 +216,18 @@ class BodySense:
 def refine_pose(rough: PinholeCamera, pocket_boxes: list, spec: TableSpec = SNOOKER,
                 max_match_px: float | None = None,
                 known_balls: list[tuple[tuple, tuple[float, float]]] = (),
-                body: BodySense | None = BodySense(), min_landmarks: int = 2) -> PoseFit:
+                body: BodySense | None = BodySense(), min_landmarks: int = 3) -> PoseFit:
     """Nudge a rough camera pose so known things land where we see them.
 
     Known things are the pockets (always at the same place on the table), and
     optionally balls whose table position we already measured from a better
     look (known_balls: pairs of (box seen now, (x, y) on the table)).
 
-    The body's own sense of height and roll (BodySense) is weighed in too, so 2
-    pockets are enough. Needs at least `min_landmarks` of them in view, with boxes
-    not cut off by the picture's edge; otherwise the rough pose is returned
-    unchanged. body=None and min_landmarks=3 give the old pockets-only fit.
+    The body's own sense of height and roll (BodySense) is weighed in too, which
+    makes 2 pockets enough for a rough fix (min_landmarks=2). By default 3 are
+    needed, because precision matters more than placing balls from every view.
+    Landmarks must not be cut off by the picture's edge; with too few, the rough
+    pose is returned unchanged. body=None gives the old pockets-only fit.
     """
     w, h = rough.width, rough.height
     max_match_px = max_match_px or 0.12 * w
@@ -281,3 +282,38 @@ def refine_pose(rough: PinholeCamera, pocket_boxes: list, spec: TableSpec = SNOO
     cam = rough.with_extrinsics(res.x[:3], res.x[3:])
     err = float(np.median(np.abs(res.fun[:-6] if body is not None else res.fun)))
     return PoseFit(cam, len(matched), err, matched, len(balls))
+
+
+# --------------------------------------------------------------------------- several looks
+
+
+def sight_weight(xy, camera_position, ball_r: float) -> np.ndarray:
+    """How much to trust one look's position, as a 2x2 weight (inverse spread) on the table.
+
+    From head height the camera looks across the cloth at a low angle, so a pixel of
+    error moves a ball much further along the line of sight than across it (by
+    about distance / height). Two looks from different sides therefore pin a ball
+    down far better than either alone, if each is trusted in the right direction.
+    """
+    cam = np.asarray(camera_position, float)
+    d = np.array([xy[0] - cam[0], xy[1] - cam[1]])
+    flat = max(float(np.linalg.norm(d)), 1e-6)
+    height = max(cam[2] - ball_r, 0.05)
+    along = d / flat
+    across = np.array([-along[1], along[0]])
+    dist = math.hypot(flat, height)
+    s_across = dist  # spread grows with distance (one pixel covers more cloth)...
+    s_along = dist * dist / height  # ...and much more along the line of sight
+    return np.outer(along, along) / s_along**2 + np.outer(across, across) / s_across**2
+
+
+def fuse_looks(looks: list[tuple[tuple[float, float], np.ndarray]], ball_r: float) -> tuple[float, float]:
+    """One position from several looks at the same ball: (position, camera position) pairs."""
+    W = np.zeros((2, 2))
+    b = np.zeros(2)
+    for xy, cam_pos in looks:
+        w = sight_weight(xy, cam_pos, ball_r)
+        W += w
+        b += w @ np.asarray(xy, float)
+    x = np.linalg.solve(W, b)
+    return float(x[0]), float(x[1])
