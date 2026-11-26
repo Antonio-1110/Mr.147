@@ -24,6 +24,7 @@ mr147-check-video = "mr147.vision.check_video:main"
 mr147-check-data = "mr147.vision.check_data:main"
 mr147-crops = "mr147.vision.reader:crops_main"
 mr147-train-reader = "mr147.vision.reader:train_main"
+mr147-studio = "mr147.vision.studio:main"
 
 [project.optional-dependencies]
 # Only needed to train or run the YOLO detector: uv sync --extra train

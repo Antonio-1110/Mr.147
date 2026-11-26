@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 from panda3d.core import (
+    LVecBase4f,
     AmbientLight,
     ColorAttrib,
     FrameBufferProperties,
@@ -356,6 +357,9 @@ def _setup_panda(width: int, height: int) -> None:
     # That changes how our shaders and shadows render (dark cloth came out almost
     # black), so ask for Panda's usual default context again, whatever loaded first.
     loadPrcFileData("", "gl-version")
+    # Some Windows/NVIDIA setups report a harmless GL error every few tables. After 20
+    # (Panda's default limit) Panda stops drawing for good and hands back old pictures,
+    # so the limit is raised; studio.py still drops any picture it has seen before.
     loadPrcFileData(
         "",
         f"""
@@ -366,6 +370,7 @@ def _setup_panda(width: int, height: int) -> None:
         framebuffer-multisample 1
         multisamples 4
         sync-video 0
+        gl-max-errors 1000000
         show-frame-rate-meter 0
         notify-level warning
         default-directnotify-level warning
@@ -451,6 +456,7 @@ class Renderer:
         self.spec = spec
         # Panda3D keeps a lamp's shadow buffer alive after the lamp is removed, so
         # each rebuild would leave buffers that still render every frame (big slowdown).
+        self.freeze_shadows(False)  # a frozen (inactive) shadow buffer might not be let go
         for lamp in getattr(self, "_lamps", []):
             lamp.setShadowCaster(False)
         self._lamps = []
@@ -554,6 +560,7 @@ class Renderer:
             gloss = look.pool_balls.shine if spec.game == "pool" else 1.0  # worn sets are duller
             n.setMaterial(_material(tuple(rgb), rng.uniform(60, 120), min(1.0, rng.uniform(0.5, 0.9) * gloss)), 1)
             n.setColor((*rgb, 1))
+            n.setShaderInput("env_gloss", LVecBase4f(float(rng.uniform(0.7, 1.3) * gloss), 0, 0, 0))  # mirrors the cloth
             n.setTag("vid", str(i))
             self._id_cam.setTagState(str(i), RenderState.make(
                 ColorAttrib.makeFlat(self._id_colour(i)), LightAttrib.makeAllOff(),
@@ -586,6 +593,12 @@ class Renderer:
             ln.lookAt(x, y, 0)
             self.render.setLight(ln)
         self.scene.setShader(self._shader)
+        # What shiny balls mirror: the cloth (lit about as brightly as it looks) and the room.
+        # (env_floor, the cloth as it comes out, is set by render_frame after exposure;
+        # until then a guess from the cloth colour.)
+        self.scene.setShaderInput("env_floor", LVecBase4f(*(float(c) * 0.8 for c in look.cloth_rgb), 1))
+        self.scene.setShaderInput("env_gloss", LVecBase4f(0, 0, 0, 0))  # only balls mirror (set per ball)
+        self.scene.setShaderInput("env_sky", LVecBase4f(*(float(c) for c in look.sky_rgb), 1))
 
     def _markings(self, spec: TableSpec, add) -> None:
         L, Wd = spec.length, spec.width
@@ -648,7 +661,19 @@ class Renderer:
         img = np.frombuffer(bytes(data), np.uint8).reshape(tex.getYSize(), tex.getXSize(), 3)
         return img[::-1].copy()  # Panda's rows start at the bottom
 
-    def render_frame(self, auto_exposure: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    def freeze_shadows(self, frozen: bool = True) -> None:
+        """Stop (or restart) redrawing the lamps' shadow maps every frame.
+
+        While nothing on the table moves, the shadows stay the same, and redrawing
+        them (a 2048 x 2048 picture per lamp) costs more than a small close-up.
+        """
+        gsg = self.base.win.getGsg()
+        for lamp in getattr(self, "_lamps", []):
+            buf = lamp.getShadowBuffer(gsg)
+            if buf is not None:
+                buf.setActive(not frozen)
+
+    def render_frame(self, auto_exposure: bool = True, frames: int = 2) -> tuple[np.ndarray, np.ndarray]:
         """Returns (rgb image, per-pixel ball index).
 
         Like a real camera's auto-exposure, the lights are scaled so the cloth comes
@@ -659,8 +684,8 @@ class Renderer:
         too_bright = math.inf  # lowest exposure seen that burnt the cloth out
         cloth = None
         for attempt in range(8):
-            self.base.graphicsEngine.renderFrame()
-            self.base.graphicsEngine.renderFrame()  # second frame so shadows are up to date
+            for _ in range(frames):  # a second frame so shadows are up to date
+                self.base.graphicsEngine.renderFrame()
             rgb = self._grab(self.color_tex)
             if not auto_exposure:
                 break
@@ -683,12 +708,17 @@ class Renderer:
                 break
         ids = self._decode_ids(self._grab(self.id_tex))
         self.cloth_mask = ids == CLOTH_ID
+        if auto_exposure and self.cloth_mask.mean() > 0.05:
+            # Balls mirror the cloth as it actually came out (studio close-ups keep this).
+            seen = np.median(rgb[self.cloth_mask], axis=0) / 255.0
+            self.scene.setShaderInput("env_floor", LVecBase4f(*(float(c) for c in seen), 1))
         return rgb, np.where(self.cloth_mask, -1, ids)  # callers only see balls and pockets
 
     def _set_exposure(self, exposure: float) -> None:
         self.exposure = exposure
         for light, (r, g, b, a) in getattr(self, "_light_colours", []):
             light.setColor((r * exposure, g * exposure, b * exposure, a))
+
 
     # ----------------------------------------------------------------- projection
 
