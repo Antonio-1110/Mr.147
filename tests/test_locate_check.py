@@ -44,7 +44,7 @@ def test_small_run_writes_a_report(renderer, tmp_path):
     s = Settings(game="pool", tables=1, views=3, seed=1)
     res = run(renderer, s, keep_examples=2)
     text = write(res, s, tmp_path, renderer.w, renderer.h, 1.0)
-    assert "What the robot gets" in text
+    assert "3+ pockets (robot trusts)" in text
     for name in ("summary.txt", "balls.csv", "error-map.jpg", "views.jpg"):
         assert (tmp_path / name).exists()
     fixed = [r for r in res.rows if r["pockets"] >= 3]
