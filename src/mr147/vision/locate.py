@@ -26,7 +26,7 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from .table import SNOOKER, TableSpec
+from .table import SNOOKER, TableSpec, off_cloth
 
 
 @dataclass(frozen=True)
@@ -132,9 +132,13 @@ class PinholeCamera:
     def pocket_box(self, px: float, py: float, pr: float, spec: TableSpec) -> np.ndarray | None:
         """Box of a pocket: the hole in the cloth plus its cut-out in the rail (as labelled)."""
         th = np.linspace(0, 2 * math.pi, 48, endpoint=False)
-        pts = [np.stack([px + r * np.cos(th), py + r * np.sin(th), np.full_like(th, z)], 1)
-               for z, r in ((0.0, pr), (spec.rail_h, pr * 1.1))]
-        p = self.project(np.vstack(pts))
+        # Same shape the renderer draws and labels: the rail-level cut-out stops at the
+        # cushion line (it doesn't hover over the cloth), see table.off_cloth.
+        snap = off_cloth((px, py), spec.length / 2, spec.width / 2)
+        hole = [(px + pr * c, py + pr * s, 0.0) for c, s in zip(np.cos(th), np.sin(th))]
+        rail = [(px + x, py + y, spec.rail_h)
+                for x, y in (snap(1.1 * pr * c, 1.1 * pr * s) for c, s in zip(np.cos(th), np.sin(th)))]
+        p = self.project(np.array(hole + rail))
         return None if np.isnan(p).any() else np.concatenate([p.min(0), p.max(0)])
 
 
