@@ -34,7 +34,7 @@ from mr147.table_memory.ball_sets import BALL_SETS
 
 from .detector import Detector, PixelDetection
 from .identify import assign_names, name_for_memory, name_limits
-from .locate import PinholeCamera, PoseFit, ball_position, refine_pose
+from .locate import PinholeCamera, PoseFit, ball_position, refine_pose, sight_weight
 from .scene import CameraPose
 from .table import SNOOKER, TableSpec
 
@@ -231,7 +231,8 @@ def merge_frames(old: DetectionFrame, old_cam: PinholeCamera, new: DetectionFram
                  settings: VisionSettings | None = None, in_play: Counter | None = None) -> DetectionFrame:
     """Combine two looks at the same (still) table into one.
 
-    * Seen in both: average the two positions, trusting the more confident look more,
+    * Seen in both: combine the two positions, trusting each look most across its
+      line of sight (and the more confident look more),
       and average the two looks' scores for each name (a ball called "8" once and
       "4" once ends up unsure, so memory will ask for another look).
     * Only in the new look: keep it.
@@ -258,9 +259,11 @@ def merge_frames(old: DetectionFrame, old_cam: PinholeCamera, new: DetectionFram
             continue
         used_old.add(best)
         o = old.detections[best]
-        wo, wn = max(o.confidence, 1e-3), max(n.confidence, 1e-3)
-        x = (o.x * wo + n.x * wn) / (wo + wn)
-        y = (o.y * wo + n.y * wn) / (wo + wn)
+        # Each look is trusted more across its line of sight than along it (see
+        # locate.sight_weight), and more when it was more confident.
+        Wo = max(o.confidence, 1e-3) * sight_weight(o.position, old_cam.position, spec.ball_r)
+        Wn = max(n.confidence, 1e-3) * sight_weight(n.position, new_cam.position, spec.ball_r)
+        x, y = np.linalg.solve(Wo + Wn, Wo @ np.array(o.position) + Wn @ np.array(n.position))
         so, sn = _scores(o), _scores(n)
         out.append((x, y, {k: (so.get(k, 0.0) + sn.get(k, 0.0)) / 2 for k in so.keys() | sn.keys()}))
     new_balls = [np.array([d.x, d.y, spec.ball_r]) for d in new.detections]

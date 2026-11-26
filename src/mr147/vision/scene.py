@@ -47,7 +47,7 @@ from panda3d.core import (
 from . import table as T
 from .shaders import FRAG, MAX_LIGHTS, VERT
 from .pool_balls import CLASSIC, PoolBallStyle, pool_ball_image
-from .table import POOL_HEAD_X, POOL_FOOT_X, POOL_RGB, SNOOKER, Ball, TableSpec
+from .table import POOL_HEAD_X, POOL_FOOT_X, POOL_RGB, SNOOKER, Ball, TableSpec, off_cloth as _off_cloth
 
 W_DEFAULT, H_DEFAULT = 1280, 720
 CLOTH_ID = 150  # ID-image value for the cloth and cushions (balls and pockets use 0, 1, 2, ...)
@@ -107,29 +107,6 @@ def _box(sx: float, sy: float, sz: float, uv_scale: float = 1.0) -> GeomNode:
     node = GeomNode("box")
     node.addGeom(geom)
     return node
-
-
-def _off_cloth(centre, half_l: float, half_w: float):
-    """Moves points (relative to `centre`) that lie over the playing area onto its edge.
-
-    The pocket's rail-level parts (the cut-out, liner and cap) must stop at the cushion
-    line; drawn as full circles they would hover over the cloth like a black lid.
-    Corner pockets sit on the playing area's corner, so their points go to the corner.
-    """
-    px, py = centre
-    corner = abs(abs(px) - half_l) < 1e-6 and abs(abs(py) - half_w) < 1e-6
-
-    def snap(x: float, y: float) -> tuple[float, float]:
-        wx, wy = px + x, py + y
-        if abs(wx) >= half_l or abs(wy) >= half_w:
-            return x, y
-        if corner:
-            return 0.0, 0.0
-        if half_l - abs(wx) < half_w - abs(wy):
-            return math.copysign(half_l, wx) - px, y
-        return x, math.copysign(half_w, wy) - py
-
-    return snap
 
 
 def _disc(radius: float, segments: int = 40, snap=None) -> GeomNode:

@@ -52,3 +52,6 @@ logs/
 .vscode/
 .idea/
 .sync-tmp/
+
+# Check reports (mr147-locate-check)
+results/

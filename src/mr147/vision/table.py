@@ -6,6 +6,7 @@ is -x), y across the width, z up. The cloth surface is z = 0.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -117,3 +118,26 @@ class Ball:
     @property
     def label(self) -> str:
         return f"red{self.index + 1}" if self.name == "red" else self.name
+
+
+def off_cloth(centre, half_l: float, half_w: float):
+    """Moves points (relative to `centre`) that lie over the playing area onto its edge.
+
+    The pocket's rail-level parts (the cut-out, liner and cap) must stop at the cushion
+    line; drawn as full circles they would hover over the cloth like a black lid.
+    Corner pockets sit on the playing area's corner, so their points go to the corner.
+    """
+    px, py = centre
+    corner = abs(abs(px) - half_l) < 1e-6 and abs(abs(py) - half_w) < 1e-6
+
+    def snap(x: float, y: float) -> tuple[float, float]:
+        wx, wy = px + x, py + y
+        if abs(wx) >= half_l or abs(wy) >= half_w:
+            return x, y
+        if corner:
+            return 0.0, 0.0
+        if half_l - abs(wx) < half_w - abs(wy):
+            return math.copysign(half_l, wx) - px, y
+        return x, math.copysign(half_w, wy) - py
+
+    return snap
